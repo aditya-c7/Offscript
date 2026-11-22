@@ -1,4 +1,3 @@
-/// <reference path="../../../node_modules/.pnpm/node_modules/@types/node/index.d.ts" />
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import { normalizeUrl } from "@offscript/shared";
 import { assertSafeUrl, resolveAndValidate } from "./ssrf.js";

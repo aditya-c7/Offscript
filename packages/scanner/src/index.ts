@@ -1,4 +1,3 @@
-/// <reference path="../../../node_modules/.pnpm/node_modules/@types/node/index.d.ts" />
 export * from "./http-client.js";
 export * from "./ssrf.js";
 export * from "./crawler.js";

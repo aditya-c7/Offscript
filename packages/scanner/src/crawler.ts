@@ -1,4 +1,3 @@
-/// <reference path="../../../node_modules/.pnpm/node_modules/@types/node/index.d.ts" />
 import type { Browser } from "playwright";
 import { normalizeUrl } from "@offscript/shared";
 import type { PageSnapshot, ScanContext, Stack } from "@offscript/shared";

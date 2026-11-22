@@ -1,4 +1,3 @@
-/// <reference path="../../../node_modules/.pnpm/node_modules/@types/node/index.d.ts" />
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chromium } from "playwright";

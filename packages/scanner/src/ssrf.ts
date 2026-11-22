@@ -1,4 +1,3 @@
-/// <reference path="../../../node_modules/.pnpm/node_modules/@types/node/index.d.ts" />
 import { promises as dns } from "node:dns";
 import ipaddr from "ipaddr.js";
 import {
