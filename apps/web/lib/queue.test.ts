@@ -9,11 +9,18 @@ import {
 const SCAN_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const ANALYSIS_ID = "123e4567-e89b-42d3-a456-426614174000";
 const DEFAULT_URL = "http://localhost:8787/enqueue";
+const TOKEN = "test-worker-enqueue-token";
 
 const fetchMock = vi.fn<typeof fetch>();
 
 function okResponse(): Response {
   return new Response(null, { status: 200 });
+}
+
+function postedHeaders(): unknown {
+  const call = fetchMock.mock.calls[0];
+  expect(call).toBeDefined();
+  return call?.[1]?.headers;
 }
 
 function postedBody(): unknown {
@@ -22,7 +29,10 @@ function postedBody(): unknown {
   if (!call) return undefined;
   const init = call[1];
   expect(init?.method).toBe("POST");
-  expect(init?.headers).toEqual({ "content-type": "application/json" });
+  expect(postedHeaders()).toEqual({
+    "content-type": "application/json",
+    authorization: `Bearer ${TOKEN}`,
+  });
   return JSON.parse(String(init?.body));
 }
 
@@ -31,6 +41,7 @@ describe("web enqueue HTTP client", () => {
     fetchMock.mockReset();
     fetchMock.mockResolvedValue(okResponse());
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("WORKER_ENQUEUE_TOKEN", TOKEN);
   });
 
   afterEach(() => {
@@ -58,6 +69,32 @@ describe("web enqueue HTTP client", () => {
       queue: ANALYSIS_QUEUE,
       payload: { analysisId: ANALYSIS_ID },
     });
+  });
+
+  it("sends the configured token in the Authorization header", async () => {
+    vi.stubEnv("WORKER_ENQUEUE_TOKEN", "another-secret-value");
+
+    await enqueueScan(SCAN_ID);
+
+    expect(postedHeaders()).toEqual({
+      "content-type": "application/json",
+      authorization: "Bearer another-secret-value",
+    });
+  });
+
+  it("omits the Authorization header and warns when no token is configured", async () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    vi.stubEnv("WORKER_ENQUEUE_TOKEN", "   ");
+
+    await enqueueScan(SCAN_ID);
+
+    expect(postedHeaders()).toEqual({ "content-type": "application/json" });
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[offscript] queue enqueue missing worker token",
+    );
+    // The worker rejects this request with 401, so nothing is enqueued.
   });
 
   it("uses WORKER_ENQUEUE_URL when it is a valid http(s) URL", async () => {
@@ -119,6 +156,22 @@ describe("web enqueue HTTP client", () => {
     );
     for (const args of errorSpy.mock.calls) {
       expect(JSON.stringify(args)).not.toContain(ANALYSIS_ID);
+    }
+  });
+
+  it("never logs the token value", async () => {
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    fetchMock.mockResolvedValue(new Response(null, { status: 401 }));
+
+    await enqueueScan(SCAN_ID);
+
+    for (const args of [...errorSpy.mock.calls, ...warnSpy.mock.calls]) {
+      expect(JSON.stringify(args)).not.toContain(TOKEN);
     }
   });
 });

@@ -1,5 +1,5 @@
 import PgBoss from "pg-boss";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   createServer,
   type IncomingMessage,
@@ -233,6 +233,39 @@ function enqueueConfig(): { host: string; port: number } {
     host: host.success ? host.data : "127.0.0.1",
     port: port.success ? port.data : 8787,
   };
+}
+
+/** Shared secret required on every write endpoint. Blank means "not configured". */
+const EnqueueTokenSchema = z.string().trim().min(1);
+
+function enqueueToken(): string {
+  const parsed = EnqueueTokenSchema.safeParse(process.env.WORKER_ENQUEUE_TOKEN);
+  return parsed.success ? parsed.data : "";
+}
+
+/** Length-independent, constant-time comparison of two secrets. */
+function secretEqual(presented: string, expected: string): boolean {
+  const left = Buffer.from(presented, "utf8");
+  const right = Buffer.from(expected, "utf8");
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+/**
+ * Constant-time bearer check. A missing configured token denies every request
+ * (fail closed). Only the status is ever logged — never the token or payload.
+ */
+export function isAuthorizedEnqueue(req: {
+  headers: { authorization?: string | string[] };
+}): boolean {
+  const expected = enqueueToken();
+  if (expected.length === 0) return false;
+  const header = req.headers.authorization;
+  if (typeof header !== "string") return false;
+  const match = /^Bearer[ \t]+(\S+)$/i.exec(header);
+  const presented = match?.[1];
+  if (presented === undefined) return false;
+  return secretEqual(presented, expected);
 }
 
 function readEnqueueBody(req: IncomingMessage, limit: number): Promise<string> {
@@ -572,13 +605,21 @@ async function handleAnalysisSettle(
 }
 
 /** Dispatch every write endpoint. Bodies and ids are validated before use. */
-async function handleRequest(
+export async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
   const path = (req.url ?? "").split("?")[0] ?? "";
   if (req.method !== "POST") {
     sendJson(res, 404, { error: "not_found" });
+    return;
+  }
+
+  // Authenticate before reading the body: unauthenticated callers never reach
+  // a route, the database, or pg-boss. Log the status only, never the header.
+  if (!isAuthorizedEnqueue(req)) {
+    sendJson(res, 401, { error: "unauthorized" });
+    console.warn("[offscript] enqueue request rejected", 401);
     return;
   }
 
@@ -1017,10 +1058,14 @@ async function main(): Promise<void> {
   console.log("Offscript worker started (scan.site, agent.run)");
 }
 
-main().catch((error) => {
-  console.error(
-    "Worker failed to start",
-    error instanceof Error ? error.message : "unknown",
-  );
-  process.exitCode = 1;
-});
+// Unit tests import this module offline (VITEST=true) to exercise the auth
+// guard directly; they must never bind a real port or start pg-boss/Chromium.
+if (process.env.VITEST !== "true") {
+  main().catch((error) => {
+    console.error(
+      "Worker failed to start",
+      error instanceof Error ? error.message : "unknown",
+    );
+    process.exitCode = 1;
+  });
+}

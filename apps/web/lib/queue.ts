@@ -17,6 +17,8 @@ const EnqueueUrlSchema = z
     "enqueue URL must use http(s)",
   );
 const IdSchema = z.string().uuid();
+/** Shared worker secret; blank/whitespace values count as missing. */
+const EnqueueTokenSchema = z.string().trim().min(1);
 
 const EnqueueRequestSchema = z.discriminatedUnion("queue", [
   z.object({
@@ -38,7 +40,28 @@ function enqueueUrl(): string {
   return parsed.success ? parsed.data : DEFAULT_ENQUEUE_URL;
 }
 
-/** Never include the URL, the payload, or any env value in log output. */
+/**
+ * Read the shared secret from the environment. It is only ever placed in the
+ * Authorization header; it is never logged or included in the enqueue URL.
+ */
+function enqueueToken(): string {
+  const raw =
+    typeof process === "undefined"
+      ? undefined
+      : process.env.WORKER_ENQUEUE_TOKEN;
+  const parsed = EnqueueTokenSchema.safeParse(raw);
+  return parsed.success ? parsed.data : "";
+}
+
+function requestHeaders(token: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (token.length > 0) headers.authorization = `Bearer ${token}`;
+  return headers;
+}
+
+/** Never include the URL, the token, the payload, or any env value in logs. */
 function logFailure(error: unknown): void {
   console.error(
     "[offscript] queue enqueue failed",
@@ -46,12 +69,22 @@ function logFailure(error: unknown): void {
   );
 }
 
+function logMissingToken(): void {
+  console.warn("[offscript] queue enqueue missing worker token");
+}
+
 async function post(request: EnqueueRequest): Promise<void> {
   try {
     const body = EnqueueRequestSchema.parse(request);
+    const token = enqueueToken();
+    if (token.length === 0) {
+      // Fail closed: without the shared secret the worker answers 401, so no
+      // job is ever enqueued. Surface the misconfiguration for operators.
+      logMissingToken();
+    }
     const response = await fetch(enqueueUrl(), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: requestHeaders(token),
       body: JSON.stringify(body),
     });
     if (!response.ok) {

@@ -18,6 +18,7 @@ import {
   QuotaResponseSchema,
   groupRuns,
   isAnalysisTerminal,
+  isPollingExpired,
   isRunning,
   isTerminal,
   isWaiting,
@@ -123,8 +124,28 @@ export function AgentAnalysis({
   useEffect(() => {
     if (!analysisId) return;
     let timer: number | undefined;
+    const startedAtMs = Date.now();
+
+    const stopPolling = () => {
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+        timer = undefined;
+      }
+    };
+
+    const stopWithError = (message: string) => {
+      stopPolling();
+      setError(message);
+      setPhase(3);
+    };
 
     const load = async () => {
+      if (isPollingExpired(startedAtMs, Date.now())) {
+        stopWithError(
+          "We couldn't finish this test. Our agent hit one of its own limits.",
+        );
+        return;
+      }
       const result = await refreshDetail(analysisId);
       if (!result) return;
       const analysisFinished = isAnalysisTerminal(result.analysis.status);
@@ -133,15 +154,13 @@ export function AgentAnalysis({
         result.runs.every((run) => isTerminal(run.status));
       if (analysisFinished || runsFinished) {
         setPhase(3);
-        if (timer !== undefined) window.clearInterval(timer);
+        stopPolling();
       }
     };
 
     void load();
     timer = window.setInterval(() => void load(), 2000);
-    return () => {
-      if (timer !== undefined) window.clearInterval(timer);
-    };
+    return stopPolling;
   }, [analysisId, refreshDetail]);
 
   const selectedSite = sites.find((site) => site.id === selectedSiteId);

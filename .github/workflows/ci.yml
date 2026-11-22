@@ -36,10 +36,28 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @offscript/web exec opennextjs-cloudflare build
+      - name: Check web deploy config for legacy container/proxy paths
+        run: node scripts/check-web-deploy-config.mjs
+      - name: Negative test for deploy-config guard
+        run: node scripts/check-web-deploy-config.test.mjs
+      - name: Validate required runtime config names (values not printed)
         env:
-          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/offscript_ci
+          DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
+          DB_DRIVER: neon-http
+          WORKER_ENQUEUE_URL: http://127.0.0.1:8787/enqueue
+          OPENROUTER_API_KEY: DUMMY
+        run: node scripts/check-runtime-config.mjs
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build web with production OpenNext command
+        env:
+          DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
           NEXT_TELEMETRY_DISABLED: "1"
+        run: pnpm --filter @offscript/web exec opennextjs-cloudflare build
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
