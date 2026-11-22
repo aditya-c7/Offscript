@@ -1,5 +1,5 @@
 /** Deterministic checks for reaching and fetching the site. */
-import type { PageSnapshot, ScanContext } from "@offscript/shared";
+import type { PageSnapshot, ScanContext, Verdict } from "@offscript/shared";
 import {
   hostnameOf,
   htmlPages,
@@ -276,7 +276,8 @@ export function checkHumanAgentParity(ctx: ScanContext) {
 }
 
 const CONTACT_PATH = /(^|\/)(contact|contact-us|support|get-in-touch)(\/|$)/i;
-const CONTACT_WORD = /\b(contact|email|phone|call us|get in touch|reach us)\b/i;
+const CONTACT_WORD =
+  /\b(contact|e-?mail|mail|phone|call\s+us|get\s+in\s+touch|reach\s+us|write\s+to\s+us)\b|@/i;
 const MAIL_RE = /^mailto:[^\s@]+@[^\s@]+\.[^\s@]+/i;
 const TEL_RE = /^tel:\+?[0-9][0-9\s().-]{3,}/i;
 
@@ -321,14 +322,12 @@ export function checkTrustPages(ctx: ScanContext) {
     }
   });
   const found = realMailTo.length + realTel.length + reachablePageUrls.length;
-  const verdict =
-    nullContactLinks.length > 0
-      ? "fail"
-      : found > 0
-        ? "pass"
-        : reachableContactPages.length > 0
-          ? "partial"
-          : "fail";
+  // A broken contact affordance is a failed signal, but a working mailto:/tel:
+  // or a reachable contact page still rescues the check.
+  let verdict: Verdict = "fail";
+  if (found > 0) verdict = "pass";
+  else if (nullContactLinks.length > 0) verdict = "fail";
+  else if (reachableContactPages.length > 0) verdict = "partial";
   return makeCheck(ctx, "retrieval.trust_pages", {
     verdict,
     confidence: 0.87,
@@ -337,6 +336,9 @@ export function checkTrustPages(ctx: ScanContext) {
       tel_links: realTel.length,
       reachable_contact_pages: reachablePageUrls.length,
       contact_links_without_destination: nullContactLinks.length,
+      contact_labels_without_destination: unique(
+        nullContactLinks.map((link) => link.text.trim()),
+      ).slice(0, 10),
       total_links_checked: links.length,
     },
     snippet:

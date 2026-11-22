@@ -402,8 +402,9 @@ export function AgentAnalysis({
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  We couldn&apos;t finish this test. Our agent hit one of its
-                  own limits.
+                  {
+                    "We couldn't finish this test. Our agent hit one of its own limits."
+                  }
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button

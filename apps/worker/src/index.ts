@@ -33,6 +33,9 @@ import {
   classifyInfraError,
   type RunnerDeps,
 } from "@offscript/agent";
+// Namespace import so the worker also compiles against router versions that
+// do not export `getLastModelSelection` yet. The value is validated at use.
+import * as agentModule from "@offscript/agent";
 import { startChromiumWatchdog } from "./watchdog.js";
 import { createSemaphore, limitForMemory } from "./concurrency.js";
 
@@ -40,6 +43,37 @@ const env = getEnv();
 const db = getDb();
 const boss = new PgBoss(env.DATABASE_URL);
 const storageDir = env.STORAGE_DIR;
+
+const ModelSelectionSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+});
+
+type ModelSelection = z.infer<typeof ModelSelectionSchema>;
+
+/**
+ * Resolve the provider/model that the LLM router actually used last.
+ *
+ * The router export is feature-detected because the router package can be
+ * deployed slightly ahead of this worker. Everything crossing that module
+ * boundary is validated with Zod before use. When nothing was recorded, fall
+ * back to the configured provider/model so persistence never goes blank.
+ */
+function currentModelSelection(): ModelSelection {
+  let recorded: ModelSelection | undefined;
+  if ("getLastModelSelection" in agentModule) {
+    const candidate: unknown = agentModule.getLastModelSelection;
+    const getter = z
+      .function()
+      .returns(ModelSelectionSchema.optional())
+      .safeParse(candidate);
+    if (getter.success) recorded = getter.data();
+  }
+  return {
+    provider: recorded?.provider ?? env.LLM_PROVIDER,
+    model: recorded?.model ?? env.LLM_MODEL_AGENT,
+  };
+}
 
 const looseSchema = z.record(z.string(), z.unknown());
 const ScanJobSchema = z.object({ scanId: z.string().uuid() });
@@ -133,6 +167,7 @@ async function processScan(data: unknown): Promise<void> {
           interpretation,
           detectedStack: ctx.detectedStack,
         });
+        const selection = currentModelSelection();
 
         await db.delete(checks).where(eq(checks.scanId, scanRow.id));
         await db.insert(checks).values(
@@ -168,6 +203,12 @@ async function processScan(data: unknown): Promise<void> {
               pages_opened_browser: report.pages_opened_browser,
               possible_pages_found: report.possible_pages_found,
               sampled_urls: report.sampled_urls,
+              provider: selection.provider,
+              model: selection.model,
+              model_selection: {
+                provider: selection.provider,
+                model: selection.model,
+              },
             },
             interpretationJson: interpretation,
             protocolsJson: protocols,
@@ -312,6 +353,7 @@ async function processAnalysis(data: unknown): Promise<void> {
           result.verdict === "infra_error"
             ? "infra_error"
             : verification.verdict;
+        const selection = currentModelSelection();
 
         await db
           .update(runs)
@@ -322,7 +364,7 @@ async function processAnalysis(data: unknown): Promise<void> {
             verifierJson: verification,
             tokenInputTotal: result.inputTokens,
             tokenOutputTotal: result.outputTokens,
-            modelId: env.LLM_MODEL_AGENT,
+            modelId: selection.model,
           })
           .where(eq(runs.id, run.id));
       } catch (error) {

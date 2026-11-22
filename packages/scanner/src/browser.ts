@@ -1,5 +1,6 @@
 /// <reference path="../../../node_modules/.pnpm/node_modules/@types/node/index.d.ts" />
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { chromium } from "playwright";
 import type { Browser, BrowserContext } from "playwright";
 import { z } from "zod";
@@ -84,13 +85,31 @@ export interface LoadPageOptions {
   recordCms?: boolean;
 }
 
+/**
+ * Resolve a local Chromium binary. Prefer the Playwright-managed build, then
+ * fall back to a system Chrome/Edge install. Never adds --no-sandbox.
+ */
+export function resolveChromiumExecutable(): string | undefined {
+  const candidates: readonly string[] = [
+    chromium.executablePath(),
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
 /** Launch Chromium with read-only-safe defaults. */
 export async function getBrowser(): Promise<Browser> {
   const args = ["--disable-dev-shm-usage"];
   if (process.env.OFFSCRIPT_LOCAL_TEST === "1") {
     args.push("--no-sandbox");
   }
-  return chromium.launch({ args });
+  const executablePath = resolveChromiumExecutable();
+  return chromium.launch(executablePath ? { args, executablePath } : { args });
 }
 
 /**
@@ -112,6 +131,9 @@ export async function loadPage(
 
   try {
     await context.addInitScript(() => {
+      // esbuild (via tsx/next) may emit __name() wrappers inside serialized
+      // evaluate callbacks. Provide a no-op shim in the page context.
+      Reflect.set(globalThis, "__name", (fn: unknown) => fn);
       Reflect.set(globalThis, "__offscriptCls", 0);
       if (typeof PerformanceObserver === "undefined") return;
       try {
@@ -292,23 +314,27 @@ export async function loadPage(
         }
       }
 
-      const links = Array.from(document.querySelectorAll("a[href]")).map(
-        (a) => {
-          const raw = a.getAttribute("href") ?? "";
-          let href: string | null = null;
+      // Collect every anchor, including ones with no href. "Contact"/"Email"
+      // controls implemented as <a> without a destination are a real defect
+      // and must be visible to the deterministic trust-page check.
+      const links = Array.from(document.querySelectorAll("a")).map((a) => {
+        const rawAttribute = a.getAttribute("href");
+        const raw = rawAttribute ?? "";
+        let href: string | null = null;
+        if (rawAttribute !== null) {
           try {
             href = new URL(raw, location.href).toString();
           } catch {
             href = null;
           }
-          return {
-            text: visibleTextOf(a),
-            href,
-            rel: a.getAttribute("rel") ?? "",
-            raw,
-          };
-        },
-      );
+        }
+        return {
+          text: visibleTextOf(a),
+          href,
+          rel: a.getAttribute("rel") ?? "",
+          raw,
+        };
+      });
 
       const forms = Array.from(document.querySelectorAll("form")).map(
         (form) => {

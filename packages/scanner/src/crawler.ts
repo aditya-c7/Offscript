@@ -10,6 +10,7 @@ import { assertSafeUrl } from "./ssrf.js";
 const CHROME_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const PRIORITY_PATHS = [
+  "/ai",
   "/pricing",
   "/about",
   "/contact",
@@ -19,6 +20,9 @@ const PRIORITY_PATHS = [
   "/refunds",
 ];
 const MAX_SAMPLED_PAGES = 5;
+// Below this many discovered internal pages, probe the standard paths so a
+// client-rendered site still exposes its identity and legal pages.
+const FEW_CANDIDATES = 3;
 
 const EMPTY_RESPONSE: SafeFetchResponse = {
   status: 0,
@@ -47,6 +51,55 @@ function recordHeaders(
 
 function randomPath(extension: string): string {
   return `/__offscript_probe_${Math.random().toString(36).slice(2)}${extension}`;
+}
+
+/**
+ * Canonical key used to dedupe discovered candidates and sampled pages.
+ * Ignores trailing slashes, fragments and the cosmetic `www.` prefix so a
+ * homepage reached after a redirect is not sampled a second time.
+ */
+export function normalizedUrlKey(value: string): string {
+  try {
+    const url = new URL(value);
+    const host = url.host.replace(/^www\./i, "");
+    const pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return `${url.protocol}//${host}${pathname}${url.search}`;
+  } catch {
+    return (
+      value
+        .trim()
+        .replace(/^www\./i, "")
+        .replace(/\/+$/, "") || "/"
+    );
+  }
+}
+
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&#x27;/gi, "'");
+}
+
+/** Pull every `<a href>` value out of a raw or rendered HTML document. */
+export function extractHtmlHrefs(html: string): string[] {
+  const hrefs: string[] = [];
+  const anchor = /<a\b[^>]*>/gi;
+  const attribute = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+  for (const tag of html.matchAll(anchor)) {
+    const match = attribute.exec(tag[0]);
+    const raw = match?.[1] ?? match?.[2] ?? match?.[3];
+    if (raw === undefined) continue;
+    hrefs.push(decodeHtmlAttribute(raw.trim()));
+  }
+  return hrefs;
+}
+
+function isCandidateHref(raw: string): boolean {
+  const value = raw.trim();
+  return (
+    value.length > 0 && !/^(?:#|javascript:|mailto:|tel:|data:)/i.test(value)
+  );
 }
 
 function emptySnapshot(url: string, response: SafeFetchResponse): PageSnapshot {
@@ -107,45 +160,128 @@ function detectStack(headers: Record<string, string>, html: string): Stack {
   return "generic";
 }
 
-function collectInternalCandidates(
+function priorityRank(value: string): number {
+  let pathname = value;
+  try {
+    pathname = new URL(value).pathname.toLowerCase();
+  } catch {
+    pathname = value.toLowerCase();
+  }
+  const rank = PRIORITY_PATHS.findIndex(
+    (path) => pathname === path || pathname.startsWith(`${path}/`),
+  );
+  return rank === -1 ? PRIORITY_PATHS.length : rank;
+}
+
+/** Rank and dedupe internal candidates, putting standard paths first. */
+export function rankCandidates(
+  candidates: ReadonlySet<string>,
+  homepageUrl: string,
+): string[] {
+  const homeKey = normalizedUrlKey(homepageUrl);
+  return Array.from(candidates)
+    .filter((value) => normalizedUrlKey(value) !== homeKey)
+    .sort(
+      (a, b) =>
+        priorityRank(a) - priorityRank(b) ||
+        normalizedUrlKey(a).localeCompare(normalizedUrlKey(b)),
+    );
+}
+
+/**
+ * Build the deduplicated set of internal pages to sample. Server HTML, the
+ * post-JS DOM and the sitemap are all consulted so CSR sites that only expose
+ * links in one of those surfaces are still discovered.
+ */
+export function collectInternalCandidates(
   origin: string,
   host: string,
   homepage: PageSnapshot,
   sitemapXml: string,
   homepageUrl: string,
 ): string[] {
-  const found = new Set<string>();
+  const byKey = new Map<string, string>();
+  const allowedHosts = new Set<string>([host, `www.${host}`]);
+  try {
+    allowedHosts.add(new URL(homepageUrl).host);
+  } catch {
+    // Keep the hosts derived from the normalized input.
+  }
   const isInternal = (value: string): boolean => {
     try {
       const parsed = new URL(value, origin);
       return (
         (parsed.protocol === "http:" || parsed.protocol === "https:") &&
-        parsed.host === host
+        allowedHosts.has(parsed.host)
       );
     } catch {
       return false;
     }
   };
+  const add = (raw: string): void => {
+    if (!isCandidateHref(raw)) return;
+    try {
+      const resolved = new URL(raw, origin);
+      if (!isInternal(resolved.toString())) return;
+      resolved.hash = "";
+      const href = resolved.toString();
+      const key = normalizedUrlKey(href);
+      if (!byKey.has(key)) byKey.set(key, href);
+    } catch {
+      // Ignore malformed links; they are not safe to navigate to.
+    }
+  };
 
   for (const link of homepage.links) {
-    if (link.href !== null && isInternal(link.href)) found.add(link.href);
+    if (link.href !== null) add(link.href);
   }
+  for (const href of extractHtmlHrefs(homepage.rawHtml)) add(href);
+  for (const href of extractHtmlHrefs(homepage.renderedHtml)) add(href);
   for (const match of sitemapXml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)) {
     const loc = match[1];
-    if (loc !== undefined && isInternal(loc)) found.add(loc);
+    if (loc !== undefined) add(loc);
   }
 
-  return Array.from(found)
-    .filter((value) => value !== homepageUrl)
-    .sort((a, b) => {
-      const pathA = new URL(a).pathname.toLowerCase();
-      const pathB = new URL(b).pathname.toLowerCase();
-      const rankA = PRIORITY_PATHS.findIndex((p) => pathA.includes(p));
-      const rankB = PRIORITY_PATHS.findIndex((p) => pathB.includes(p));
-      const scoreA = rankA === -1 ? PRIORITY_PATHS.length : rankA;
-      const scoreB = rankB === -1 ? PRIORITY_PATHS.length : rankB;
-      return scoreA - scoreB || pathA.localeCompare(pathB);
-    });
+  return rankCandidates(new Set(byKey.values()), homepageUrl);
+}
+
+/**
+ * Final guard for `sampled_urls`: redirects can make two different requested
+ * URLs resolve to the same document, so collapse them by canonical key.
+ */
+export function dedupeSampled(snapshots: readonly PageSnapshot[]): {
+  pages: PageSnapshot[];
+  sampledUrls: string[];
+} {
+  const pages: PageSnapshot[] = [];
+  const sampledUrls: string[] = [];
+  const seen = new Set<string>();
+  for (const snapshot of snapshots) {
+    const key = normalizedUrlKey(snapshot.url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pages.push(snapshot);
+    sampledUrls.push(snapshot.url);
+  }
+  return { pages, sampledUrls };
+}
+
+/** Standard paths to probe directly when few internal links were discovered. */
+export function planPriorityProbes(
+  candidates: readonly string[],
+  origin: string,
+): string[] {
+  if (candidates.length >= FEW_CANDIDATES) return [];
+  const known = new Set(candidates.map((value) => normalizedUrlKey(value)));
+  const probes: string[] = [];
+  for (const path of PRIORITY_PATHS) {
+    const url = new URL(path, origin).toString();
+    const key = normalizedUrlKey(url);
+    if (known.has(key)) continue;
+    known.add(key);
+    probes.push(url);
+  }
+  return probes;
 }
 
 /**
@@ -267,10 +403,32 @@ export async function crawlSite(
     sitemap.text,
     homepage.url,
   );
-  const pages: PageSnapshot[] = [homepage];
-  const sampledUrls: string[] = [homepage.url];
+  // Client-rendered sites often expose no usable links in the initial HTML.
+  // Probe the standard paths directly so identity and legal pages are still
+  // checked instead of silently skipping every page after the homepage.
+  for (const probeUrl of planPriorityProbes(candidates, origin)) {
+    const probe = await attempt<SafeFetchResponse | null>(
+      () => safeFetch(probeUrl, { timeoutMs: 5_000 }),
+      null,
+    );
+    if (probe !== null && probe.status === 200) {
+      const key = normalizedUrlKey(probeUrl);
+      if (!candidates.some((value) => normalizedUrlKey(value) === key)) {
+        candidates.push(probeUrl);
+      }
+    }
+  }
 
-  for (const candidate of candidates.slice(0, MAX_SAMPLED_PAGES - 1)) {
+  const snapshots: PageSnapshot[] = [homepage];
+  for (const candidate of candidates) {
+    const candidateKey = normalizedUrlKey(candidate);
+    if (
+      snapshots.some(
+        (snapshot) => normalizedUrlKey(snapshot.url) === candidateKey,
+      )
+    ) {
+      continue;
+    }
     const safe = await attempt<{ url: URL; ip: string } | null>(
       () => assertSafeUrl(candidate),
       null,
@@ -281,10 +439,10 @@ export async function crawlSite(
       null,
     );
     if (snapshot === null) continue;
-    pages.push(snapshot);
-    sampledUrls.push(snapshot.url);
-    if (pages.length >= MAX_SAMPLED_PAGES) break;
+    snapshots.push(snapshot);
+    if (dedupeSampled(snapshots).pages.length >= MAX_SAMPLED_PAGES) break;
   }
+  const { pages, sampledUrls } = dedupeSampled(snapshots);
 
   const headers = homepage.headers;
   const html = `${homepage.rawHtml}\n${homepage.renderedHtml}`;

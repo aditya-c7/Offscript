@@ -1,21 +1,58 @@
 /** Deterministic checks derived from browser/DOM observations. */
 import { htmlPages, makeCheck, ratio } from "./util.js";
-import type { ScanContext } from "@offscript/shared";
+import type { LinkInfo, PageSnapshot, ScanContext } from "@offscript/shared";
 
 const NAV_TEXT =
   /\b(home|about|pricing|price|contact|docs|documentation|blog|products?|services?|support|menu|next|previous|back|shop|login|sign\s*in|privacy|terms|refund|faq)\b/i;
+const HASH_ONLY = /^#/;
+const JS_VOID = /^javascript:\s*void\s*\(\s*0\s*\)\s*;?$/i;
+
+/**
+ * True when an anchor does not actually navigate anywhere: a bare `#top`-style
+ * fragment, `javascript:void(0)`, or an absolute link that only differs from
+ * the current document by its fragment.
+ */
+function isHashOnlyDestination(link: LinkInfo, page: PageSnapshot): boolean {
+  const raw = link.raw.trim();
+  if (HASH_ONLY.test(raw) || JS_VOID.test(raw)) return true;
+  if (link.href === null) return false;
+  try {
+    const destination = new URL(link.href, page.url);
+    const current = new URL(page.url);
+    return (
+      destination.origin === current.origin &&
+      destination.pathname === current.pathname &&
+      destination.search === current.search &&
+      destination.hash.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function checkNavigationSemantics(ctx: ScanContext) {
   const pages = htmlPages(ctx);
   let realLinks = 0;
   let jsNav = 0;
+  let hashOnlyNav = 0;
   const samples: string[] = [];
+  const hashOnlySamples: string[] = [];
   for (const page of pages) {
+    const hashOnly = page.links.filter((link) =>
+      isHashOnlyDestination(link, page),
+    );
+    hashOnlyNav += hashOnly.length;
+    for (const link of hashOnly.slice(0, 2)) {
+      hashOnlySamples.push(
+        `${page.url}: "${link.text.slice(0, 32)}" -> ${link.raw || link.href || "null"}`,
+      );
+    }
     const links = page.links.filter(
       (link) =>
         typeof link.href === "string" &&
         link.href.trim().length > 0 &&
-        !/^(javascript:|#)/i.test(link.href.trim()),
+        !/^(javascript:|#)/i.test(link.href.trim()) &&
+        !isHashOnlyDestination(link, page),
     );
     realLinks += links.length;
     for (const link of links.slice(0, 2)) {
@@ -36,7 +73,9 @@ export function checkNavigationSemantics(ctx: ScanContext) {
     if (pageJsNav > 0)
       samples.push(`${pageJsNav} onclick nav control(s) on ${page.url}`);
   }
-  const score = ratio(realLinks, realLinks + jsNav);
+  // Hash-only nav anchors are dead ends: they count against the real-link
+  // ratio just like onclick-only controls do.
+  const score = ratio(realLinks, realLinks + jsNav + hashOnlyNav);
   const verdict =
     realLinks > 0 && score >= 0.8 ? "pass" : score >= 0.5 ? "partial" : "fail";
   return makeCheck(ctx, "browser.navigation_semantics", {
@@ -45,11 +84,15 @@ export function checkNavigationSemantics(ctx: ScanContext) {
     evidence: {
       real_nav_links: realLinks,
       onclick_nav_controls: jsNav,
+      hash_only_nav_links: hashOnlyNav,
+      hash_only_examples: hashOnlySamples.slice(0, 5),
       real_link_ratio: score,
       threshold: 0.8,
       pages_checked: pages.length,
     },
-    snippet: samples.slice(0, 5).join(" | ") || null,
+    snippet:
+      [...samples.slice(0, 4), ...hashOnlySamples.slice(0, 2)].join(" | ") ||
+      null,
     selector: "a[href], [onclick]",
   });
 }

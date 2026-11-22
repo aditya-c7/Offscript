@@ -355,18 +355,38 @@ export type ScanReport = z.infer<typeof ScanReportSchema>;
 /* Env validation                                                      */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Role model lists are comma-separated. Reject strings with no usable entry
+ * (empty, only whitespace, or only separators) so routing always has a model.
+ */
+const ModelListSchema = z
+  .string()
+  .refine(
+    (value) => value.split(",").some((entry) => entry.trim().length > 0),
+    { message: "must contain at least one non-empty comma-separated model" },
+  );
+
 export const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   LLM_PROVIDER: z
-    .enum(["openrouter", "groq", "gemini", "openai"])
-    .default("openrouter"),
+    .enum(["nvidia", "groq", "gemini", "openrouter", "openai"])
+    .default("nvidia"),
+  NVIDIA_API_KEY: z.string().default(""),
   OPENROUTER_API_KEY: z.string().default(""),
   GROQ_API_KEY: z.string().default(""),
   GEMINI_API_KEY: z.string().default(""),
   OPENAI_API_KEY: z.string().default(""),
-  LLM_MODEL_FAST: z.string().default("openai/gpt-oss-20b:free"),
-  LLM_MODEL_AGENT: z.string().default("openai/gpt-oss-120b:free"),
-  LLM_MODEL_VISION: z.string().default("google/gemini-2.5-flash"),
+  LLM_MODEL_FAST: z
+    .string()
+    .default("meta/llama-3.3-70b-instruct,openai/gpt-oss-20b"),
+  LLM_MODEL_AGENT: z
+    .string()
+    .default("openai/gpt-oss-120b,qwen/qwen3-235b-a22b"),
+  LLM_MODEL_VISION: z
+    .string()
+    .default(
+      "meta/llama-3.2-90b-vision-instruct,mistralai/mistral-large-3-675b-instruct-2512",
+    ),
   LLM_FALLBACK_PROVIDER: z.string().default("groq"),
   LLM_FALLBACK_MODEL_FAST: z.string().default("llama-3.3-70b-versatile"),
   STORAGE_DIR: z.string().default("./storage"),

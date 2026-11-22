@@ -274,15 +274,16 @@ export function TaskPicker({
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-md text-xs text-muted-foreground">
-              One agent analysis covers all of these. It&apos;s only used if at
-              least one task gets a result.
+              {
+                "One agent analysis covers all of these. It's only used if at least one task gets a result."
+              }
             </p>
             <Button
               type="button"
               onClick={submit}
               disabled={busy || totalSelected === 0}
             >
-              {busy ? "Starting…" : "Run agent analysis"}
+              {busy ? "Starting…" : "Run free agent analysis ->"}
             </Button>
           </div>
           {remaining !== null ? (
