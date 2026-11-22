@@ -27,6 +27,9 @@ function output(stdout: string): void {
 }
 
 const SEP = "\u0001";
+// Process listings are platform-specific; fixtures follow the host so the
+// production parser exercised by each test is the same one CI will use.
+const EOL = process.platform === "win32" ? "\r\n" : "\n";
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const MONTHS = [
   "Jan",
@@ -157,7 +160,7 @@ describe("listChromiumProcesses", () => {
         : "    PID                  STARTED CMD",
       formatLine(4242, first, "chrome.exe --remote-debugging-pipe"),
       formatLine(9999, second, "system-idle-process"),
-    ].join(process.platform === "win32" ? "\r\n" : "\n");
+    ].join(EOL);
 
     output(stdout);
 
@@ -182,7 +185,7 @@ describe("startChromiumWatchdog", () => {
       formatLine(111, orphanAt, "chrome --remote-debugging-pipe"),
       formatLine(222, freshAt, "chrome --remote-debugging-pipe"),
       formatLine(333, orphanAt, "unrelated-daemon"),
-    ].join(process.platform === "win32" ? "\r\n" : "\n");
+    ].join(EOL);
     output(stdout);
 
     const kill = vi.spyOn(process, "kill").mockImplementation(() => true);

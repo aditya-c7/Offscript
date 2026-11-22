@@ -18,9 +18,9 @@ No signup. No paywall.
 
 ## Modules
 
-- **Overview** — scan a site, track scores across sites, and jump into the next action.
-- **Agent analysis** — pick tasks, watch agents work step by step, and inspect artifacts with PII redacted.
-- **Scans** — the full report: score, 31 checks, ranked fixes, and 7 agent protocols.
+- **Overview** - scan a site, track scores across sites, and jump into the next action.
+- **Agent analysis** - pick tasks, watch agents work step by step, and inspect artifacts with PII redacted.
+- **Scans** - the full report: score, 31 checks, ranked fixes, and 7 agent protocols.
 
 ## What it checks
 

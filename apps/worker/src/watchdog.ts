@@ -37,8 +37,10 @@ export function isOrphanedChromium(
   return ageMs > maxAgeMs;
 }
 
+// `lstart` renders `Www Mmm dd HH:mm:ss yyyy`. The weekday is deliberately
+// non-capturing so groups 1-6 map directly onto parsePosixLine below.
 const POSIX_LINE_RE =
-  /^\s*(\d+)\s+([A-Za-z]{3})\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})\s+(\d{4})\s+(.+)$/;
+  /^\s*(\d+)\s+[A-Za-z]{3}\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})\s+(\d{4})\s+(.+)$/;
 
 function parsePosixLine(line: string): ProcessSample | null {
   const match = POSIX_LINE_RE.exec(line);

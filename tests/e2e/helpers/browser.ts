@@ -18,11 +18,22 @@ export interface WsCloseRecord {
  */
 export function resolveChromiumExecutable(): string | undefined {
   const candidates: readonly string[] = [
+    // Playwright-managed download (present after `playwright install chromium`).
     chromium.executablePath(),
+    // Windows system installs.
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    // Linux system installs (ubuntu-latest ships Chrome/Chromium in some images).
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/snap/bin/chromium",
+    // macOS system installs.
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   ];
   return candidates.find((candidate) => existsSync(candidate));
 }

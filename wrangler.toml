@@ -1,0 +1,7 @@
+# Root Cloudflare Workers config for the `offscript` Worker.
+# An explicit `main` keeps wrangler from trying to auto-detect a Worker app
+# inside this pnpm workspace.
+name = "offscript"
+main = "cloudflare/worker.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
