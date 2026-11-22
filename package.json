@@ -12,6 +12,11 @@
     "test:e2e": "turbo run test:e2e",
     "db:generate": "pnpm --filter @offscript/db db:generate",
     "db:migrate": "pnpm --filter @offscript/db db:migrate",
+    "deploy:cloudflare": "wrangler deploy",
+    "deploy:check": "wrangler deploy --dry-run",
+    "containers:list": "wrangler containers list",
+    "docker:build:web": "docker build -f Dockerfile .",
+    "docker:build:worker": "docker build -f Dockerfile.worker .",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "devDependencies": {

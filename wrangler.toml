@@ -5,3 +5,49 @@ name = "offscript"
 main = "cloudflare/worker.js"
 compatibility_date = "2026-11-01"
 workers_dev = true
+
+# The Worker fronts a real Cloudflare Container that runs the Next.js app.
+#
+# `durable_object` is the current scheduling policy (the `default` policy is
+# deprecated). With this policy the Durable Object selects the image and the
+# instance size when it calls `ctx.container.start()`; Wrangler builds and
+# digest-pins the Dockerfile into `ctx.container.images.base` at deploy time.
+# `max_instances` / `instance_type` belong only to the deprecated `default`
+# policy and are intentionally not used here. The Worker addresses a single
+# named Durable Object ("offscript-web"), so exactly one container instance is
+# used per deployment.
+[[containers]]
+class_name = "WebContainer"
+scheduling_policy = "durable_object"
+
+[containers.images.base]
+dockerfile = "./Dockerfile"
+build_context = "."
+
+# The background worker runs in its own long-lived container (no HTTP server).
+# It is started explicitly via GET /_internal/worker/start and must stay alive
+# for the lifetime of the deployment, so its Durable Object sets the maximum
+# supported inactivity timeout (6 hours) at runtime.
+[[containers]]
+class_name = "WorkerContainer"
+scheduling_policy = "durable_object"
+
+[containers.images.worker]
+dockerfile = "./Dockerfile.worker"
+build_context = "."
+
+[[durable_objects.bindings]]
+name = "WEB_CONTAINER"
+class_name = "WebContainer"
+
+[[durable_objects.bindings]]
+name = "WORKER_CONTAINER"
+class_name = "WorkerContainer"
+
+[exports.WebContainer]
+type = "durable-object"
+storage = "sqlite"
+
+[exports.WorkerContainer]
+type = "durable-object"
+storage = "sqlite"

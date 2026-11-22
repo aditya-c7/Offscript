@@ -18,3 +18,10 @@ AGENTS.md
 opencode.json
 .opencode/
 docs/agent-notes/
+
+# Cloudflare / Wrangler local state
+.wrangler/
+.wrangler-state/
+wrangler-out/
+.dev.vars
+.dev.vars.*

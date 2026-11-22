@@ -65,4 +65,23 @@ Verify with `pnpm typecheck && pnpm lint && pnpm test`.
 
 ## Deployment
 
-`apps/web/Dockerfile` and `deploy/docker-compose.yml` provide a non-root web image and a worker container. Configuration is environment-only; no secrets are stored in the repository.
+Offscript deploys to Cloudflare at offscript.adityahq.me.
+
+Set the Worker secrets:
+
+```bash
+npx wrangler secret put DATABASE_URL
+npx wrangler secret put NVIDIA_API_KEY
+```
+
+Optionally add fallback provider keys: `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, and `OPENAI_API_KEY`.
+
+Then deploy:
+
+```bash
+npx wrangler deploy
+```
+
+The Worker starts a container running `apps/web` and proxies requests to it. Check status with `npx wrangler containers list`.
+
+For self-hosting, `apps/web/Dockerfile` and `deploy/docker-compose.yml` provide a non-root web image and a worker container. Configuration is environment-only; no secrets are stored in the repository.

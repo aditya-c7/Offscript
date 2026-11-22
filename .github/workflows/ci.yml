@@ -23,3 +23,27 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+
+  deploy-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # --containers-rollout none skips the Dockerfile image build (no Docker,
+      # no Cloudflare credentials) while still loading/validating the full
+      # Wrangler config, including `main` resolution in this pnpm monorepo.
+      - name: Validate Wrangler config (offline, no credentials)
+        run: npx wrangler deploy --dry-run --containers-rollout none --outdir ./wrangler-out
+      - name: Build web container image
+        if: hashFiles('Dockerfile') != ''
+        run: docker build -f Dockerfile .
+      - name: Build worker container image
+        if: hashFiles('Dockerfile.worker') != ''
+        run: docker build -f Dockerfile.worker .
