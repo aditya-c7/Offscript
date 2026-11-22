@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.turbo/
+.next/
+out/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+storage/
+.playwright/
+*.tsbuildinfo
+.DS_Store
+
+# Local agent harness / AI files — never pushed
+AGENTS.md
+opencode.json
+.opencode/
+docs/agent-notes/
