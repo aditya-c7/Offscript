@@ -1,4 +1,4 @@
-# Web image for the deployment fronted by Cloudflare.
+# Self-hosted web image. Cloudflare Workers deployment uses OpenNext instead.
 # No secrets are baked into this image: DATABASE_URL and provider keys are
 # supplied by the container environment at runtime (see deploy/docker-compose.yml).
 FROM node:22-bookworm-slim AS base

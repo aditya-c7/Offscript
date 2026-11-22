@@ -368,14 +368,10 @@ const ModelListSchema = z
 
 export const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
-  LLM_PROVIDER: z
-    .enum(["nvidia", "groq", "gemini", "openrouter", "openai"])
-    .default("nvidia"),
+  LLM_PROVIDER: z.enum(["nvidia", "groq", "openrouter"]).default("nvidia"),
   NVIDIA_API_KEY: z.string().default(""),
   OPENROUTER_API_KEY: z.string().default(""),
   GROQ_API_KEY: z.string().default(""),
-  GEMINI_API_KEY: z.string().default(""),
-  OPENAI_API_KEY: z.string().default(""),
   LLM_MODEL_FAST: z
     .string()
     .default("meta/llama-3.3-70b-instruct,openai/gpt-oss-20b"),

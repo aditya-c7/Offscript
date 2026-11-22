@@ -1,14 +1,21 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import { ObservationV2Schema } from "@offscript/shared";
 import { z } from "zod";
-import { getStorageDir } from "@/lib/server-db";
 
 const RunIdSchema = z.string().uuid();
+const RelativePathSchema = z.string().min(1).max(500);
+const ArtifactKeySchema = z.string().min(1).max(600);
+
+/**
+ * Storage-agnostic text reader: receives a normalized `<runId>/<relative path>`
+ * key. A Node host may inject an fs-backed reader; Workers callers can omit it
+ * (or inject an R2/HTTP-backed one). No Node-only modules are imported here.
+ */
+export type ArtifactTextReader = (key: string) => Promise<string>;
 
 /**
  * Stored artifact paths may be relative to the run directory or include the
- * storage prefix. Normalize them to a path inside `<storage>/<runId>`.
+ * storage prefix. Normalize them to a path inside `<runId>` using plain string
+ * operations only.
  */
 export function relativeArtifactPath(
   runId: string,
@@ -25,29 +32,64 @@ export function relativeArtifactPath(
   return relative.join("/");
 }
 
-/** Read a redacted observation/v2 artifact, validating it at the boundary. */
+/**
+ * Validate and normalize an artifact key using plain string operations, so
+ * traversal and invalid run ids are rejected on every runtime.
+ */
+export function safeArtifactKey(
+  runId: string,
+  relativePath: string | null | undefined,
+): string | null {
+  if (typeof relativePath !== "string") return null;
+  if (!RunIdSchema.safeParse(runId).success) return null;
+  if (!RelativePathSchema.safeParse(relativePath).success) return null;
+
+  const relative = relativeArtifactPath(runId, relativePath);
+  if (!relative) return null;
+
+  const segments = relative.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        segment.length === 0 ||
+        segment === "." ||
+        segment === ".." ||
+        segment.includes("\\") ||
+        segment.includes("\0"),
+    )
+  ) {
+    return null;
+  }
+
+  const key = `${runId}/${segments.join("/")}`;
+  return ArtifactKeySchema.safeParse(key).success ? key : null;
+}
+
+/**
+ * Read a redacted observation/v2 artifact, validating it at the boundary.
+ *
+ * Missing, unreadable, malformed or otherwise invalid observations are
+ * optional; they must never break reading the rest of the analysis. Without an
+ * injected reader (the Workers default) this safely yields `undefined`.
+ */
 export async function readObservation(
   runId: string,
   relativePath: string | null,
+  readText?: ArtifactTextReader,
 ): Promise<unknown | undefined> {
-  if (!relativePath || relativePath.length === 0 || relativePath.length > 500) {
-    return undefined;
-  }
-  if (!RunIdSchema.safeParse(runId).success) return undefined;
-
-  const relative = relativeArtifactPath(runId, relativePath);
-  if (!relative) return undefined;
-
-  const base = path.resolve(getStorageDir(), runId);
-  const full = path.resolve(base, relative);
-  if (!full.startsWith(base + path.sep)) return undefined;
-
   try {
-    const text = await fs.readFile(full, "utf8");
+    const key = safeArtifactKey(runId, relativePath);
+    if (!key || !readText) return undefined;
+
+    const text = await readText(key);
+    if (typeof text !== "string" || text.length === 0) return undefined;
+
     const raw: unknown = JSON.parse(text);
     const parsed = ObservationV2Schema.safeParse(raw);
     return parsed.success ? parsed.data : undefined;
   } catch {
+    // Missing, unreadable, malformed or otherwise invalid observations are
+    // optional; they must never break reading the rest of the analysis.
     return undefined;
   }
 }

@@ -24,7 +24,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
 
-  deploy-check:
+  build-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,14 +36,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # --containers-rollout none skips the Dockerfile image build (no Docker,
-      # no Cloudflare credentials) while still loading/validating the full
-      # Wrangler config, including `main` resolution in this pnpm monorepo.
-      - name: Validate Wrangler config (offline, no credentials)
-        run: npx wrangler deploy --dry-run --containers-rollout none --outdir ./wrangler-out
-      - name: Build web container image
-        if: hashFiles('Dockerfile') != ''
-        run: docker build -f Dockerfile .
-      - name: Build worker container image
-        if: hashFiles('Dockerfile.worker') != ''
-        run: docker build -f Dockerfile.worker .
+      - run: pnpm --filter @offscript/web exec opennextjs-cloudflare build
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/offscript_ci
+          NEXT_TELEMETRY_DISABLED: "1"

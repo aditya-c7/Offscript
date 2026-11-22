@@ -1,17 +1,11 @@
 import { NextResponse } from "next/server";
-import {
-  analyses,
-  runs,
-  settleAnalysisCredit,
-  sites,
-  steps,
-} from "@offscript/db";
+import { analyses, runs, sites, steps } from "@offscript/db";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getOwnerId } from "@/lib/cookies";
 import { getServerDb } from "@/lib/server-db";
 import { jsonError, logServerError } from "@/app/api/_lib/http";
-import { isTerminalRunStatus, readObservation } from "@/app/api/_lib/analysis";
+import { readObservation } from "@/app/api/_lib/analysis";
 
 const ParamsSchema = z.object({ id: z.string().uuid() });
 
@@ -81,22 +75,15 @@ export async function GET(
       }),
     );
 
-    let creditConsumed = row.analysis.creditConsumed;
-    if (
-      runRows.length > 0 &&
-      runRows.every((run) => isTerminalRunStatus(run.status))
-    ) {
-      const settlement = await settleAnalysisCredit(row.analysis.id);
-      creditConsumed = creditConsumed || settlement.credited;
-    }
-
+    // Credit settlement happens in the Node worker. This read-only endpoint
+    // simply reports the stored value; it never mutates quota state.
     return NextResponse.json({
       analysis: {
         id: row.analysis.id,
         siteId: row.analysis.siteId,
         status: row.analysis.status,
         host: row.site.normalizedHost,
-        creditConsumed,
+        creditConsumed: row.analysis.creditConsumed,
         artifactsExpiresAt:
           row.analysis.artifactsExpiresAt?.toISOString() ?? null,
         artifactsDeletedAt:

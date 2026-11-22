@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { ObservationV2Schema } from "@offscript/shared";
+import {
+  AgentActionSchema,
+  ObservationV2Schema,
+  VerifierResultSchema,
+} from "@offscript/shared";
 
 export const OverviewSiteSchema = z.object({
   id: z.string(),
@@ -72,8 +76,9 @@ export function parseObservation(value: unknown) {
   return ObservationV2Schema.safeParse(value);
 }
 
-const WAITING = new Set(["waiting", "queued"]);
+const WAITING = new Set(["waiting", "queued", "pending", "created"]);
 const RUNNING = new Set(["running", "active", "in_progress", "processing"]);
+const TERMINAL = new Set(["done", "failed", "error", "complete"]);
 
 export function isWaiting(status: string): boolean {
   return WAITING.has(status);
@@ -83,8 +88,39 @@ export function isRunning(status: string): boolean {
   return RUNNING.has(status);
 }
 
+/** Only a known finished status counts as terminal; unknown statuses keep polling. */
 export function isTerminal(status: string): boolean {
-  return !isWaiting(status) && !isRunning(status);
+  return TERMINAL.has(status);
+}
+
+export function isAnalysisTerminal(status: string): boolean {
+  return status === "complete" || status === "failed";
+}
+
+export interface RunVerifier {
+  verdict: string;
+  reasons: string[];
+  grounded: boolean;
+}
+
+/** Re-validate the verifier payload at the UI boundary before rendering. */
+export function verifierForRun(run: AnalysisRun): RunVerifier | null {
+  const parsed = VerifierResultSchema.safeParse(run.verifierJson);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Collect quoted evidence from the agent's final "done" action. */
+export function evidenceQuotesForRun(run: AnalysisRun): string[] {
+  const quotes: string[] = [];
+  for (const step of run.steps) {
+    const action = AgentActionSchema.safeParse(step.actionJson);
+    if (action.success && action.data.kind === "done") {
+      for (const quote of action.data.evidence_quotes) {
+        if (quote.length > 0 && !quotes.includes(quote)) quotes.push(quote);
+      }
+    }
+  }
+  return quotes;
 }
 
 export interface TaskGroup {

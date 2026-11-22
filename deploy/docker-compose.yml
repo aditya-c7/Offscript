@@ -1,9 +1,5 @@
-# Offscript deployment: web + worker, terminated at Cloudflare.
-# Public origin: https://offscript.adityahq.me
-#
-# Postgres is EXTERNAL. Its connection string and every provider key come from
-# the environment (or an untracked env file passed with `docker compose --env-file`);
-# nothing secret is stored in this file. No hardcoded IPs or internal addresses.
+# Self-hosting option for Offscript.
+# Postgres is external. Secrets come from the environment or a local env file.
 
 services:
   web:
@@ -14,9 +10,13 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      # Self-hosted compose runs the web app as Node, not on Cloudflare Workers.
+      # DB_DRIVER=neon-http is only for a Workers deployment.
+      DB_DRIVER: node
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to the external Postgres instance}
       STORAGE_DIR: /app/storage
       NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://offscript.adityahq.me}
+      WORKER_ENQUEUE_URL: ${WORKER_ENQUEUE_URL:-http://worker:8787/enqueue}
     ports:
       - "${WEB_PORT:-3000}:3000"
     volumes:
@@ -30,21 +30,21 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      DB_DRIVER: node
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to the external Postgres instance}
       STORAGE_DIR: /app/storage
+      WORKER_ENQUEUE_HOST: ${WORKER_ENQUEUE_HOST:-0.0.0.0}
+      WORKER_ENQUEUE_PORT: ${WORKER_ENQUEUE_PORT:-8787}
       WORKER_MEMORY_MB: ${WORKER_MEMORY_MB:-4096}
-      LLM_PROVIDER: ${LLM_PROVIDER:-nvidia}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
       LLM_FALLBACK_PROVIDER: ${LLM_FALLBACK_PROVIDER:-groq}
-      LLM_MODEL_FAST: ${LLM_MODEL_FAST:-meta/llama-3.3-70b-instruct,openai/gpt-oss-20b}
-      LLM_MODEL_AGENT: ${LLM_MODEL_AGENT:-openai/gpt-oss-120b,qwen/qwen3-235b-a22b}
-      LLM_MODEL_VISION: ${LLM_MODEL_VISION:-meta/llama-3.2-90b-vision-instruct,mistralai/mistral-large-3-675b-instruct-2512}
+      LLM_MODEL_FAST: ${LLM_MODEL_FAST:-nvidia/nemotron-3.5-lightning:free}
+      LLM_MODEL_AGENT: ${LLM_MODEL_AGENT:-nvidia/nemotron-3.5-lightning:free}
+      LLM_MODEL_VISION: ${LLM_MODEL_VISION:-nvidia/nemotron-3.5-super-vl:free}
       LLM_FALLBACK_MODEL_FAST: ${LLM_FALLBACK_MODEL_FAST:-llama-3.3-70b-versatile}
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    # Shared with web so artifact routes can serve what the worker records.
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
     volumes:
       - offscript-storage:/app/storage
     shm_size: "2gb"

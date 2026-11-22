@@ -336,9 +336,24 @@ export async function captureObservation(
       };
     });
   } catch (error) {
-    errors.push(
-      `observation DOM capture failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    errors.push(`observation DOM capture failed: ${message}`);
+
+    // A failed DOM capture must not produce an empty observation: empty
+    // content would collide on `computeStateToken("", url)` across every
+    // failure, making distinct broken states look identical to the runner.
+    // A unique failure marker keeps the observation non-empty and the token
+    // distinct while remaining plain, JSON-serializable, non-PII text.
+    raw = {
+      bodyText:
+        `DOM capture unavailable for ${url || "the current page"}: ${message} ` +
+        `[failure-id:${randomUUID()}]`,
+      headings: [{ level: 1, text: "DOM capture unavailable" }],
+      navigation: [],
+      nodes: [{ role: "heading", name: "DOM capture unavailable", depth: 0 }],
+      targets: [],
+      omitted: [],
+    };
   }
 
   const state_token = computeStateToken(raw.bodyText, url);
@@ -424,6 +439,19 @@ export async function captureObservation(
 /* Screenshot capture                                                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Capture the final page as two WebP artifacts and always return their paths.
+ *
+ * The two files are written under `${outDir}/${runId}/`:
+ *   - `<idx>-numbered.webp` — the screenshot with numbered target badges
+ *   - `<idx>-final.webp`    — the plain, normalized screenshot
+ *
+ * Resilience is deliberate: a visual_screen run must not lose its screenshots
+ * because a badge has empty bounds or an image-enhancement step fails. The raw
+ * screenshot is used as a fallback for both files in that case. PII masking is
+ * best-effort but its cleanup always runs in a `finally` block, so the page is
+ * never left with injected styles/overlays even when a later step throws.
+ */
 export async function captureScreenshots(args: {
   page: Page;
   targets: ObservationTarget[];
@@ -438,55 +466,80 @@ export async function captureScreenshots(args: {
   const finalPath = join(runDir, `${idx}-final.webp`);
   const numberedPath = join(runDir, `${idx}-numbered.webp`);
 
-  const unmask = await maskSensitiveInputs(page);
-  let rawShot: Buffer;
+  let unmask: (() => Promise<void>) | null = null;
   try {
-    rawShot = await page.screenshot({ type: "webp", quality: 75 });
+    // Masking is best-effort: it must never prevent a screenshot from being
+    // captured. If it fails partway through we still take the screenshot.
+    unmask = await maskSensitiveInputs(page).catch(() => null);
+
+    const rawShot = await page.screenshot({ type: "webp", quality: 75 });
+
+    // Start from the raw bytes so that both files exist even if enhancement
+    // fails for any reason (including all target bounds being empty).
+    let finalBytes: Buffer = rawShot;
+    let numberedBytes: Buffer = rawShot;
+
+    try {
+      const originalMeta = await sharp(rawShot).metadata();
+      const originalWidth = originalMeta.width ?? 0;
+
+      const normalized = await sharp(rawShot)
+        .resize({ width: 1280, withoutEnlargement: true })
+        .webp({ quality: 75 })
+        .toBuffer();
+      finalBytes = normalized;
+
+      const finalMeta = await sharp(normalized).metadata();
+      const width = finalMeta.width ?? 0;
+      const height = finalMeta.height ?? 0;
+      const scale = originalWidth > 0 ? width / originalWidth : 1;
+
+      const badges = targets
+        .map((target, targetIdx) => {
+          const { x, y, width: boxWidth, height: boxHeight } = target.bounds;
+          if (!(boxWidth > 0 && boxHeight > 0)) return "";
+          const cx = (x + Math.min(boxWidth, 24) / 2) * scale;
+          const cy = (y + Math.min(boxHeight, 24) / 2) * scale;
+          const label = String(targetIdx + 1);
+          return (
+            `<circle cx="${cx}" cy="${cy}" r="12" fill="#2563eb" stroke="#ffffff" stroke-width="2"/>` +
+            `<text x="${cx}" y="${cy}" fill="#ffffff" font-family="Arial,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" dominant-baseline="central">${label}</text>`
+          );
+        })
+        .join("");
+
+      // With no visible targets (empty bounds), skip composition entirely —
+      // the numbered file is then identical to the normalized final file.
+      if (badges.length > 0 && width > 0 && height > 0) {
+        const svg = Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${badges}</svg>`,
+          "utf8",
+        );
+        numberedBytes = await sharp(normalized)
+          .composite([{ input: svg, top: 0, left: 0 }])
+          .webp({ quality: 75 })
+          .toBuffer();
+      } else {
+        numberedBytes = normalized;
+      }
+    } catch {
+      // Image enhancement is optional; fall back to the raw screenshot so
+      // that both artifact paths always resolve to real files on disk.
+      finalBytes = rawShot;
+      numberedBytes = rawShot;
+    }
+
+    await Promise.all([
+      writeFile(finalPath, finalBytes),
+      writeFile(numberedPath, numberedBytes),
+    ]);
+
+    return { numberedPath, finalPath };
   } finally {
-    await unmask();
+    if (unmask !== null) {
+      await unmask().catch(() => {
+        // Cleanup is best-effort and must never mask an earlier failure.
+      });
+    }
   }
-
-  const originalMeta = await sharp(rawShot).metadata();
-  const originalWidth = originalMeta.width ?? 1280;
-
-  const normalized = await sharp(rawShot)
-    .resize({ width: 1280, withoutEnlargement: true })
-    .webp({ quality: 75 })
-    .toBuffer();
-
-  const finalMeta = await sharp(normalized).metadata();
-  const width = finalMeta.width ?? 1280;
-  const height = finalMeta.height ?? 0;
-  const scale = originalWidth > 0 ? width / originalWidth : 1;
-
-  const badges = targets
-    .map((target, targetIdx) => {
-      const { x, y, width: boxWidth, height: boxHeight } = target.bounds;
-      if (!(boxWidth > 0 && boxHeight > 0)) return "";
-      const cx = (x + Math.min(boxWidth, 24) / 2) * scale;
-      const cy = (y + Math.min(boxHeight, 24) / 2) * scale;
-      const label = String(targetIdx + 1);
-      return (
-        `<circle cx="${cx}" cy="${cy}" r="12" fill="#2563eb" stroke="#ffffff" stroke-width="2"/>` +
-        `<text x="${cx}" y="${cy}" fill="#ffffff" font-family="Arial,sans-serif" font-size="13" font-weight="bold" text-anchor="middle" dominant-baseline="central">${label}</text>`
-      );
-    })
-    .join("");
-
-  const svg = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${badges}</svg>`,
-    "utf8",
-  );
-
-  const numbered = await sharp(normalized)
-    .composite([{ input: svg, top: 0, left: 0 }])
-    .webp({ quality: 75 })
-    .toBuffer();
-
-  await Promise.all([
-    writeFile(finalPath, normalized),
-    writeFile(numberedPath, numbered),
-  ]);
-
-  return { numberedPath, finalPath };
 }

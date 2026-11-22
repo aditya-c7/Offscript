@@ -1,15 +1,8 @@
 import { NextResponse } from "next/server";
-import {
-  PIPELINE_VERSION,
-  RUBRIC_VERSION,
-  normalizeUrl,
-} from "@offscript/shared";
-import { scans, sites } from "@offscript/db";
-import { randomUUID } from "node:crypto";
+import { normalizeUrl } from "@offscript/shared";
 import { z } from "zod";
 import { getOwnerId } from "@/lib/cookies";
-import { enqueueScan } from "@/lib/queue";
-import { getServerDb } from "@/lib/server-db";
+import { createWorkerJob } from "@/app/api/_lib/quota";
 import {
   jsonError,
   limitPost,
@@ -43,39 +36,13 @@ export async function POST(request: Request) {
 
   try {
     const ownerId = await getOwnerId();
-    const db = getServerDb();
-    let scanId = "";
-
-    await db.transaction(async (tx) => {
-      const insertedSites = await tx
-        .insert(sites)
-        .values({
-          ownerCookieId: ownerId,
-          url: normalized.href,
-          normalizedHost: normalized.host,
-          detectedStack: "generic",
-        })
-        .returning({ id: sites.id });
-      const site = insertedSites[0];
-      if (!site) throw new Error("site insert failed");
-
-      const insertedScans = await tx
-        .insert(scans)
-        .values({
-          siteId: site.id,
-          shareToken: randomUUID(),
-          status: "queued",
-          rubricVersion: RUBRIC_VERSION,
-          pipelineVersion: PIPELINE_VERSION,
-        })
-        .returning({ id: scans.id });
-      const scan = insertedScans[0];
-      if (!scan) throw new Error("scan insert failed");
-      scanId = scan.id;
+    // The worker owns the transactional inserts (site + scan) and returns the
+    // generated scan id. The web app never opens a DB transaction here.
+    const id = await createWorkerJob("/scans", {
+      ownerId,
+      url: normalized.href,
     });
-
-    await enqueueScan(scanId);
-    return NextResponse.json({ id: scanId }, { status: 201 });
+    return NextResponse.json({ id }, { status: 201 });
   } catch (error: unknown) {
     logServerError("scan creation failed", error);
     return jsonError("Could not start the scan. Please try again.", 500);

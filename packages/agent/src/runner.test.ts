@@ -3,6 +3,7 @@ import type { ZodType } from "zod";
 import type { Page } from "playwright";
 import {
   MAX_TURN_INPUT_TOKENS,
+  VerifierResultSchema,
   type AgentAction,
   type ObservationV2,
   type PolicyEvent,
@@ -102,11 +103,13 @@ const extractAction: AgentAction = {
 
 describe("runTask loop control", () => {
   it("warns on the first repeated state and exits as no_clear_result on the second", async () => {
+    // Identical content/title/targets is a genuine stall; a token-only match
+    // with changing content is not.
     const observations = [
-      observation("same", "first"),
-      observation("same", "second"),
-      observation("same", "third"),
-      observation("same", "fourth"),
+      observation("same", "same"),
+      observation("same", "same"),
+      observation("same", "same"),
+      observation("same", "same"),
     ];
     let observationIndex = 0;
     const steps: AgentStep[] = [];
@@ -148,8 +151,12 @@ describe("runTask loop control", () => {
     });
 
     expect(result.verdict).toBe("no_clear_result");
-    expect(result.answer).toBe("");
-    expect(result.steps).toHaveLength(4);
+    expect(result.answer).toContain("visible content same");
+    expect(result.evidenceQuotes.length).toBeGreaterThan(0);
+    expect(result.screenshots).not.toBeNull();
+    expect(result.steps).toHaveLength(3);
+    // The verifier's fake response fails validation and throws before tokens
+    // are counted, so only the two agent decisions contribute here.
     expect(result.inputTokens).toBe(6);
     expect(result.outputTokens).toBe(4);
     expect(
@@ -158,7 +165,7 @@ describe("runTask loop control", () => {
     expect(steps.some((step) => step.metadata["stuck_loop"] === true)).toBe(
       true,
     );
-    expect(roles).toEqual(["agent", "agent"]);
+    expect(roles).toEqual(["agent", "agent", "fast"]);
   });
 
   it("does not click when the policy gate blocks the action", async () => {
@@ -222,6 +229,124 @@ describe("runTask loop control", () => {
     expect(clickSpy).not.toHaveBeenCalled();
     expect(
       recordedSteps.some((step) => step.metadata["blocked_by_policy"] === true),
+    ).toBe(true);
+  });
+});
+
+describe("runTask result propagation", () => {
+  const doneAction: AgentAction = {
+    kind: "done",
+    answer: "The price is $42.",
+    evidence_quotes: ["Price: $42"],
+    reasoning: "Criterion met.",
+  };
+
+  it("propagates a done answer, attaches screenshots to the step/result, and gives vision the numbered image", async () => {
+    const screenshotSpy = vi.fn((args: { step: number }) => ({
+      numberedPath: `numbered-${args.step}.png`,
+      finalPath: "final.png",
+    }));
+    const visionText: string[] = [];
+    const deps: RunnerDeps = {
+      captureObservation: async () => observation("state", "marker"),
+      captureScreenshots: async (args) => screenshotSpy(args),
+      assertActionAllowed: allow,
+      persistStep: async () => undefined,
+      callJson: async <T>(
+        role: ModelRole,
+        schema: ZodType<T>,
+        messages: { content: string }[],
+      ) => {
+        if (role === "fast") {
+          const value = VerifierResultSchema.parse({
+            verdict: "pass",
+            reasons: ["grounded"],
+            grounded: true,
+          });
+          return { value: value as T, inputTokens: 1, outputTokens: 1 };
+        }
+        visionText.push(messages.map((m) => m.content).join("\n"));
+        const parsed = schema.safeParse(doneAction);
+        if (!parsed.success) throw new Error("invalid fake action");
+        return { value: parsed.data, inputTokens: 1, outputTokens: 1 };
+      },
+      now: increasingClock(),
+    };
+
+    const result = await runTask({
+      page: fakePage(),
+      profile: "visual_screen",
+      task: "Find the price",
+      successCriteria: "Reports the price",
+      detailsLines: [],
+      outDir: "out",
+      runId: "run-done",
+      deps,
+    });
+
+    expect(result.verdict).toBe("pass");
+    expect(result.answer).toBe("The price is $42.");
+    expect(result.evidenceQuotes).toEqual(["Price: $42"]);
+    expect(result.screenshots?.numberedPath).toBe("numbered-0.png");
+    expect(result.steps).toHaveLength(1);
+    expect(
+      (result.steps[0] as { screenshots?: { numberedPath: string } })
+        .screenshots?.numberedPath,
+    ).toBe("numbered-0.png");
+    expect(screenshotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outDir: "out",
+        runId: "run-done",
+        step: 0,
+      }),
+    );
+    expect(visionText).toHaveLength(1);
+    expect(visionText[0]).toContain("numbered-0.png");
+  });
+
+  it("ends null/invalid actions as no_clear_result with an observation-derived answer", async () => {
+    const recorded: AgentStep[] = [];
+    const deps: RunnerDeps = {
+      captureObservation: async () => observation("state", "marker"),
+      captureScreenshots: async () => ({
+        numberedPath: "n.png",
+        finalPath: "f.png",
+      }),
+      assertActionAllowed: allow,
+      persistStep: async (step) => {
+        recorded.push(step);
+      },
+      callJson: async <T>(role: ModelRole) => {
+        if (role === "fast") {
+          const value = VerifierResultSchema.parse({
+            verdict: "no_clear_result",
+            reasons: [],
+            grounded: false,
+          });
+          return { value: value as T, inputTokens: 0, outputTokens: 0 };
+        }
+        throw new Error("invalid fake action");
+      },
+      now: increasingClock(),
+    };
+
+    const result = await runTask({
+      page: fakePage(),
+      profile: "text_structure",
+      task: "Find a fact",
+      successCriteria: "Reports a fact",
+      detailsLines: [],
+      outDir: "out",
+      runId: "run-invalid",
+      deps,
+    });
+
+    expect(result.verdict).toBe("no_clear_result");
+    expect(result.answer).toContain("visible content marker");
+    expect(result.evidenceQuotes.length).toBeGreaterThan(0);
+    expect(recorded.every((step) => step.action === null)).toBe(true);
+    expect(
+      recorded.some((step) => step.metadata["invalid_action"] === true),
     ).toBe(true);
   });
 });

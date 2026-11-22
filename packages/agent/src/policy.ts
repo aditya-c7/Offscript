@@ -150,17 +150,69 @@ export async function createReadOnlyContext(
 const SENSITIVE_AUTOCOMPLETE_PATTERN =
   /cc-|current-password|new-password|one-time-code|card|cvv|cvc|otp/i;
 
+/**
+ * Descriptor for the element an action targets. Every field is optional so a
+ * caller may pass a full `ObservationTarget` straight through instead of a
+ * lossy `{ role, name, destination }` projection: observations carry the
+ * accessible `name`, `role`, `destination` and `state`, while richer captures
+ * may also provide `attributes`, `inputType` and `autocomplete`. The policy
+ * inspects all of these sources before allowing a `type` action.
+ */
 export interface ActionTarget {
-  role: string;
-  name: string;
-  destination: string | null;
+  role?: string;
+  name?: string;
+  destination?: string | null;
   inputType?: string;
   autocomplete?: string;
+  attributes?: Record<string, unknown>;
+  state?: Record<string, unknown>;
 }
 
 export interface ActionPolicyResult {
   allowed: boolean;
   event: PolicyEvent;
+}
+
+/** Read a string value from a string-keyed record without unchecked casts. */
+function stringValue(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function firstString(...values: Array<string | undefined>): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return "";
+}
+
+/**
+ * Collect every hint that may identify a sensitive input. Observations do not
+ * carry `inputType`/`autocomplete` directly, so the accessible name, arbitrary
+ * DOM `attributes`, and passthrough `state` are checked as well.
+ */
+function sensitiveSignals(target: ActionTarget): string {
+  const values = [
+    target.inputType,
+    target.autocomplete,
+    target.name,
+    stringValue(target.attributes, "type"),
+    stringValue(target.attributes, "autocomplete"),
+    stringValue(target.attributes, "name"),
+    stringValue(target.attributes, "placeholder"),
+    stringValue(target.attributes, "aria-label"),
+    stringValue(target.state, "inputType"),
+    stringValue(target.state, "autocomplete"),
+    stringValue(target.state, "type"),
+    stringValue(target.state, "name"),
+    stringValue(target.state, "placeholder"),
+  ];
+  return values
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
 }
 
 /**
@@ -169,22 +221,47 @@ export interface ActionPolicyResult {
  */
 export function assertActionAllowed(
   action: AgentAction,
-  target: ActionTarget,
+  target: ActionTarget = {},
 ): ActionPolicyResult {
-  const label = `${target.role} "${target.name}"`;
-  const suffix = target.destination ?? "no destination";
+  const role = target.role ?? "";
+  const name = target.name ?? "";
+  let label: string;
+  let suffix: string;
+  if (role.length === 0 && name.length === 0) {
+    // Navigation, scroll, extract and done actions have no element target.
+    // Report the URL for navigation instead of logging an empty label.
+    label = action.kind === "navigate" ? "navigation" : "(no target)";
+    suffix = action.kind === "navigate" ? action.url : "no destination";
+  } else {
+    label = `${role} "${name}"`.trim();
+    suffix = target.destination ?? "no destination";
+  }
+
   let blocked = false;
   let rule = "action_allowed";
   let detail = `${action.kind} on ${label} (${suffix}) allowed`;
 
+  const signals = sensitiveSignals(target);
   if (
     action.kind === "type" &&
-    (SENSITIVE_INPUT_PATTERN.test(target.inputType ?? "") ||
-      SENSITIVE_AUTOCOMPLETE_PATTERN.test(target.autocomplete ?? ""))
+    signals.length > 0 &&
+    (SENSITIVE_INPUT_PATTERN.test(signals) ||
+      SENSITIVE_AUTOCOMPLETE_PATTERN.test(signals))
   ) {
     blocked = true;
     rule = "sensitive_input_blocked";
-    detail = `Refusing to type into sensitive field ${label} (type=${target.inputType ?? ""}, autocomplete=${target.autocomplete ?? ""})`;
+    const inputType = firstString(
+      target.inputType,
+      stringValue(target.attributes, "type"),
+      stringValue(target.state, "type"),
+      stringValue(target.state, "inputType"),
+    );
+    const autocomplete = firstString(
+      target.autocomplete,
+      stringValue(target.attributes, "autocomplete"),
+      stringValue(target.state, "autocomplete"),
+    );
+    detail = `Refusing to type into sensitive field ${label} (type=${inputType}, autocomplete=${autocomplete})`;
   } else if (action.kind === "click" && DESTRUCTIVE_PATTERN.test(label)) {
     blocked = true;
     rule = "destructive_click_blocked";

@@ -16,9 +16,11 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.0",
     "@offscript/shared": "workspace:*",
     "drizzle-orm": "^0.38.3",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/pg": "^8.11.10",

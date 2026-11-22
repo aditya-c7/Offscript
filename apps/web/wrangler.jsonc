@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "main": ".open-next/worker.js",
+  "name": "offscript",
+  "compatibility_date": "2026-11-22",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "vars": {
+    "DB_DRIVER": "neon-http",
+    "NEXT_PUBLIC_SITE_URL": "https://offscript.adityahq.me",
+  },
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "offscript",
+    },
+  ],
+}

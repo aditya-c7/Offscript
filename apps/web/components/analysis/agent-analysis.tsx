@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { TaskPicker } from "@/components/analysis/task-picker";
+import { RunResults } from "@/components/analysis/run-results";
 import { TraceReplay } from "@/components/analysis/trace-replay";
 import {
   AnalysisDetailSchema,
@@ -16,6 +17,7 @@ import {
   OverviewResponseSchema,
   QuotaResponseSchema,
   groupRuns,
+  isAnalysisTerminal,
   isRunning,
   isTerminal,
   isWaiting,
@@ -41,10 +43,11 @@ export function AgentAnalysis({
   initialSiteId,
   initialAnalysisId,
 }: AgentAnalysisProps) {
+  // A deep link is loaded straight away; the API validates the id at the
+  // boundary, so here we only need a non-empty value to follow.
   const deepLinkedAnalysis =
-    typeof initialAnalysisId === "string" &&
-    z.string().uuid().safeParse(initialAnalysisId).success
-      ? initialAnalysisId
+    typeof initialAnalysisId === "string" && initialAnalysisId.trim().length > 0
+      ? initialAnalysisId.trim()
       : null;
   const [sites, setSites] = useState<OverviewSite[]>([]);
   const [selectedSiteId, setSelectedSiteId] = useState(initialSiteId ?? "");
@@ -124,10 +127,11 @@ export function AgentAnalysis({
     const load = async () => {
       const result = await refreshDetail(analysisId);
       if (!result) return;
-      const done =
+      const analysisFinished = isAnalysisTerminal(result.analysis.status);
+      const runsFinished =
         result.runs.length > 0 &&
         result.runs.every((run) => isTerminal(run.status));
-      if (done) {
+      if (analysisFinished || runsFinished) {
         setPhase(3);
         if (timer !== undefined) window.clearInterval(timer);
       }
@@ -202,6 +206,7 @@ export function AgentAnalysis({
       setAnalysisId(created.data.id);
       setDetail(null);
       setPhase(2);
+      setCopied(false);
     } catch {
       setError("Could not run the analysis again.");
     } finally {
@@ -242,10 +247,13 @@ export function AgentAnalysis({
     ? detail.runs.length > 0 &&
       detail.runs.every((run) => isTerminal(run.status))
     : false;
-  const noClearResult =
-    detail !== null &&
-    allTerminal &&
-    detail.runs.some((run) => run.verdict === "no_clear_result");
+  const problemVerdict =
+    detail !== null && allTerminal
+      ? (detail.runs.find(
+          (run) =>
+            run.verdict === "infra_error" || run.verdict === "no_clear_result",
+        )?.verdict ?? null)
+      : null;
   const runningTaskCount = detail
     ? groups.filter((group) => group.runs.some((run) => isRunning(run.status)))
         .length
@@ -395,16 +403,20 @@ export function AgentAnalysis({
 
       {phase === 3 && detail ? (
         <div className="space-y-6">
-          {noClearResult ? (
+          {problemVerdict ? (
             <Card>
               <CardHeader>
-                <CardTitle>No clear result</CardTitle>
+                <CardTitle>
+                  {problemVerdict === "infra_error"
+                    ? "Test couldn't finish"
+                    : "No clear result"}
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  {
-                    "We couldn't finish this test. Our agent hit one of its own limits."
-                  }
+                  {problemVerdict === "infra_error"
+                    ? "We couldn't finish this test because of a temporary problem on our side. Please try again."
+                    : "We couldn't finish this test. Our agent hit one of its own limits."}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -425,6 +437,7 @@ export function AgentAnalysis({
               </CardContent>
             </Card>
           ) : null}
+          <RunResults detail={detail} />
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
               {detail.analysis.creditConsumed

@@ -135,6 +135,46 @@ export async function settleAnalysisCredit(
   });
 }
 
+/**
+ * Run statuses that mean "this run will never change again". Mirrors the
+ * terminal set used by the web UI so settlement is only attempted once every
+ * run of an analysis has finished. Unknown statuses deliberately keep polling.
+ */
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "done",
+  "failed",
+  "error",
+  "complete",
+]);
+
+/**
+ * True when an unsettled analysis exists and all of its runs are terminal.
+ *
+ * Read-only preflight for callers (e.g. the Node worker's settle endpoint)
+ * that must only attempt credit settlement once no run can still produce a
+ * verified verdict. The actual, idempotent deduction lives in
+ * `settleAnalysisCredit`; this helper never mutates anything.
+ */
+export async function canSettleAnalysis(analysisId: string): Promise<boolean> {
+  const db = getDb();
+
+  const analysisRows = await db
+    .select({ creditConsumed: analyses.creditConsumed })
+    .from(analyses)
+    .where(eq(analyses.id, analysisId))
+    .limit(1);
+  const analysis = analysisRows[0];
+  if (analysis === undefined || analysis.creditConsumed) return false;
+
+  const runRows = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.analysisId, analysisId));
+  if (runRows.length === 0) return false;
+
+  return runRows.every((row) => TERMINAL_RUN_STATUSES.has(row.status));
+}
+
 /** Mark artifacts deleted and clear the stored artifact paths for an analysis. */
 export async function markArtifactsDeleted(analysisId: string): Promise<void> {
   await withTransaction(async (tx) => {

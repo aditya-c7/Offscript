@@ -41,7 +41,10 @@ export async function DELETE(
     await Promise.all(
       runRows.flatMap((run) => {
         if (!RunIdSchema.safeParse(run.id).success) return [];
-        const dir = path.resolve(getStorageDir(), run.id);
+        const base = path.resolve(getStorageDir());
+        const dir = path.resolve(base, run.id);
+        // Defense in depth: never delete outside the storage root.
+        if (!dir.startsWith(base + path.sep)) return [];
         return [
           fs.rm(dir, { recursive: true, force: true }).catch(() => undefined),
         ];

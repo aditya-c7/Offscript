@@ -6,6 +6,11 @@
 
 _See what an AI agent can find, read, and do on your site._
 
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Open-22C55E?logo=cloudflare&logoColor=white)](https://offscript.adityahq.me)
+[![Overview](https://img.shields.io/badge/Overview-3_modules-2563EB)](#modules)
+[![Checks](https://img.shields.io/badge/Checks-31_static-DC2626)](#what-it-checks)
+[![Protocols](https://img.shields.io/badge/Protocols-7_detected-0891B2)](#what-it-checks)
+
 </div>
 
 ## What it does
@@ -35,7 +40,7 @@ Seven agent protocols are detected: `llms.txt`, MCP, WebMCP, A2A, OpenAPI, Markd
 
 ## Model routing
 
-NVIDIA NIM is the default provider. Each role takes a comma-separated list of models, and a model that returns 429, 503, or a timeout goes on a 60-second cooldown before the next model is tried. Groq, Gemini, OpenRouter, and OpenAI act as automatic fallback providers when their keys are set.
+NVIDIA NIM is the default provider. Groq and OpenRouter act as automatic fallback providers when their keys are set. The web app and the worker read the same role-based model configuration.
 
 ## Layout
 
@@ -57,6 +62,7 @@ Copy `.env.example` to `.env`, set `DATABASE_URL` and `NVIDIA_API_KEY`, then:
 pnpm install
 pnpm db:migrate
 pnpm dev
+pnpm worker
 ```
 
 Local fixtures: `pnpm --filter @offscript/fixtures dev`.
@@ -65,23 +71,13 @@ Verify with `pnpm typecheck && pnpm lint && pnpm test`.
 
 ## Deployment
 
-Offscript deploys to Cloudflare at offscript.adityahq.me.
+`apps/web` is packaged for Cloudflare Workers with OpenNext. In the Cloudflare dashboard, configure Workers Builds with these exact settings:
 
-Set the Worker secrets:
+- Root directory: `apps/web`
+- Install command: `pnpm install --frozen-lockfile`
+- Build command: `pnpm exec opennextjs-cloudflare build`
+- Deploy command: leave it blank, or set it to `pnpm exec opennextjs-cloudflare deploy` so it stays scoped to the app. Do not use a root-level `npx wrangler deploy`.
 
-```bash
-npx wrangler secret put DATABASE_URL
-npx wrangler secret put NVIDIA_API_KEY
-```
+Set the Worker secrets before the first deploy. Cloudflare Containers are not used.
 
-Optionally add fallback provider keys: `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, and `OPENAI_API_KEY`.
-
-Then deploy:
-
-```bash
-npx wrangler deploy
-```
-
-The Worker starts a container running `apps/web` and proxies requests to it. Check status with `npx wrangler containers list`.
-
-For self-hosting, `apps/web/Dockerfile` and `deploy/docker-compose.yml` provide a non-root web image and a worker container. Configuration is environment-only; no secrets are stored in the repository.
+`apps/worker` is a separate Node process and is not part of the Worker deployment. Run it on its own host with `pnpm worker`.

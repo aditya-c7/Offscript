@@ -8,34 +8,39 @@
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
     "lint": "node ../../scripts/lint.mjs app components lib",
-    "test": "vitest run"
+    "test": "vitest run",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload"
   },
   "dependencies": {
-    "@offscript/shared": "workspace:*",
+    "@offscript/agent": "workspace:*",
     "@offscript/db": "workspace:*",
     "@offscript/scanner": "workspace:*",
-    "@offscript/agent": "workspace:*",
-    "next": "^15.1.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "@offscript/shared": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "drizzle-orm": "^0.38.3",
+    "lucide-react": "^0.469.0",
+    "next": "^15.1.0",
     "pg": "^8.13.1",
     "pg-boss": "^10.1.0",
-    "zod": "^3.23.8",
-    "lucide-react": "^0.469.0",
-    "clsx": "^2.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "tailwind-merge": "^2.6.0",
-    "class-variance-authority": "^0.7.1"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.18",
     "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
-    "@types/pg": "^8.11.10",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "wrangler": "^4.166.0"
   }
 }
