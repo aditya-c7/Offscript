@@ -66,4 +66,4 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           DB_DRIVER: neon-http
           NEXT_TELEMETRY_DISABLED: "1"
-        run: pnpm deploy
+        run: pnpm run deploy
