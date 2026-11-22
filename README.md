@@ -6,13 +6,6 @@
 
 _See what an AI agent can find, read, and do on your site._
 
-[![Live Demo](https://img.shields.io/badge/Live_Demo-Open-22C55E?logo=cloudflare&logoColor=white)](https://offscript.adityahq.me)
-[![Overview](https://img.shields.io/badge/Overview-3_modules-2563EB)](#modules)
-[![Checks](https://img.shields.io/badge/Checks-31_static-DC2626)](#what-it-checks)
-[![Protocols](https://img.shields.io/badge/Protocols-7_detected-0891B2)](#what-it-checks)
-[![Agents](https://img.shields.io/badge/Agent_Analysis-Read--only-059669)](#modules)
-[![Models](https://img.shields.io/badge/Models-NVIDIA_NIM-F38020)](#model-routing)
-
 </div>
 
 ## What it does
