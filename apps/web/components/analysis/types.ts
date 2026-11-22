@@ -97,6 +97,15 @@ export function isAnalysisTerminal(status: string): boolean {
   return status === "complete" || status === "failed";
 }
 
+/** Pure polling deadline check: expired once the window has fully elapsed. */
+export function isPollingExpired(
+  startedAtMs: number,
+  nowMs: number,
+  timeoutMs = 600000,
+): boolean {
+  return nowMs - startedAtMs >= timeoutMs;
+}
+
 export interface RunVerifier {
   verdict: string;
   reasons: string[];

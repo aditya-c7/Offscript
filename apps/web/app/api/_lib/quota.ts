@@ -42,6 +42,20 @@ const WorkerBaseUrlSchema = z
     "worker URL must use http(s)",
   );
 const WorkerIdSchema = z.object({ id: z.string().uuid() });
+const EnqueueTokenSchema = z.string().trim().min(1);
+
+function workerHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  const raw =
+    typeof process === "undefined"
+      ? undefined
+      : process.env.WORKER_ENQUEUE_TOKEN;
+  const parsed = EnqueueTokenSchema.safeParse(raw);
+  if (parsed.success) headers.authorization = `Bearer ${parsed.data}`;
+  return headers;
+}
 
 /** Never log the URL, the payload, or any env value. */
 function workerFailure(name: string, error: unknown): Error {
@@ -83,7 +97,7 @@ export async function createWorkerJob(
   try {
     const response = await fetch(`${base}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: workerHeaders(),
       body: JSON.stringify(payload),
     });
     if (!response.ok) throw workerFailure("WorkerHttpError", undefined);
